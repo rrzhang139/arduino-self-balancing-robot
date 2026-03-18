@@ -1,0 +1,299 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Middle Layer — Full Wiring</title>
+<!--
+=== REPRODUCTION NOTES ===
+BOARD: 20 cols (A-T) × 14 rows (1-14). Perfboard 4cm×6cm.
+
+INTER-BOARD (Row 3, G-L): G3=VM(Red), H3=AIN2(Green), I3=AIN1(Blue), J3=BIN1(White), K3=BIN2(Yellow), L3=GND(Black)
+MPU-6050: Col G, Rows 4-11 (VCC,GND,SCL,SDA,XDA,XCL,AD0,INT)
+Boost#1: B6,C6,D6 (VIN,GND,VOUT)  |  Boost#2: B12,C12,D12 (VIN,GND,VOUT)
+Arduino L: Col M, Rows 2-13  |  Arduino R: Col S, Rows 2-13
+Top header: N14,O14,P14,Q14 (VCC,ECHO,TRIG,GND)
+Battery pads: A8(GND), A9(BAT+)
+
+POWER ARCHITECTURE:
+- Boost#1 VOUT(D6) → inter-board VM(G3) → bottom board DRV8833
+- Boost#2 VOUT(D12) → MPU VCC(G4) → Arduino VCC(S5) → Top header VCC(N14)
+- Battery+(A9) → B9 (taps into col B VIN bus) → Boost#2 VIN(B12) → Boost#1 VIN(B6)
+- Battery GND(A8) → B8 → C8 (taps into col C GND bus)
+- Inter-board GND(L3) → GND bus (L3→L5→row5 GND bus)
+
+D6,D7 DEFECTIVE. Motor pins: D4(AIN1),D5(AIN2),D8(BIN1),D9(BIN2).
+-->
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600;700&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap');
+  *{margin:0;padding:0;box-sizing:border-box}
+  body{background:#1a1a2e;color:#e0e0e0;font-family:'IBM Plex Sans',sans-serif;min-height:100vh;padding:20px}
+  h1{font-family:'JetBrains Mono',monospace;font-size:1.3rem;color:#00ff88;text-align:center;margin-bottom:4px}
+  .sub{text-align:center;color:#888;font-size:0.78rem;margin-bottom:14px}
+  .ctr{display:flex;flex-direction:column;align-items:center;gap:14px}
+  .tgl{display:flex;gap:5px;flex-wrap:wrap;justify-content:center}
+  .tgl button{background:#2a2a4a;color:#ccc;border:1px solid #444;padding:4px 9px;border-radius:4px;cursor:pointer;font-family:'JetBrains Mono',monospace;font-size:0.65rem;transition:all 0.2s}
+  .tgl button:hover{background:#3a3a5a}
+  .tgl button.on{background:#00ff88;color:#1a1a2e;border-color:#00ff88}
+  canvas{border-radius:6px;box-shadow:0 4px 24px rgba(0,0,0,0.5)}
+  .tt{position:absolute;background:#111;color:#fff;padding:6px 10px;border-radius:4px;font-size:0.7rem;font-family:'JetBrains Mono',monospace;pointer-events:none;display:none;z-index:100;border:1px solid #00ff88;max-width:300px;line-height:1.4}
+</style>
+</head>
+<body>
+<h1>MIDDLE LAYER — Wiring Layout</h1>
+<p class="sub">Toggle groups • All routes through empty holes • Hover for info</p>
+<div class="ctr">
+  <div class="tgl">
+    <button class="on" data-g="motor">Motor</button>
+    <button class="on" data-g="gnd">GND (all)</button>
+    <button class="on" data-g="top">Top Sigs</button>
+    <button class="on" data-g="pvm">Battery VM</button>
+    <button class="on" data-g="p5v">5V Power</button>
+    <button class="on" data-g="i2c">I2C + INT</button>
+  </div>
+  <div style="position:relative;display:inline-block">
+    <canvas id="cv" width="740" height="560"></canvas>
+    <div class="tt" id="tt"></div>
+  </div>
+</div>
+<script>
+const cv=document.getElementById('cv'),cx=cv.getContext('2d'),tt=document.getElementById('tt');
+const NC=20,NR=14,PX=50,PY=45,HS=32,HR=5;
+const CL='ABCDEFGHIJKLMNOPQRST'.split(''),RL=Array.from({length:14},(_,i)=>String(i+1));
+function ci(l){return CL.indexOf(l)}function ri(n){return n-1}
+function hx(c){return PX+c*HS}function hy(r){return PY+r*HS}
+const BX=PX-20,BY=PY-20,BW=(NC-1)*HS+40,BH=(NR-1)*HS+40;
+const nfo={};function si(c,r,t){nfo[`${c},${r}`]=t}
+const sh={motor:1,gnd:1,top:1,pvm:1,p5v:1,i2c:1};
+document.querySelectorAll('.tgl button').forEach(b=>{b.addEventListener('click',()=>{const g=b.dataset.g;sh[g]=!sh[g];b.classList.toggle('on');draw()})});
+
+// === COMPONENTS ===
+const comps=[
+  {id:'ib',pos:[[ci('G'),ri(3)],[ci('H'),ri(3)],[ci('I'),ri(3)],[ci('J'),ri(3)],[ci('K'),ri(3)],[ci('L'),ri(3)]],
+   pins:['VM','AIN2','AIN1','BIN1','BIN2','GND'],
+   wc:['#ff3333','#33cc33','#3388ff','#ffffff','#ffdd00','#333333'],
+   cn:['Red','Green','Blue','White','Yellow','Black'],
+   color:'#ffaa00',label:'Inter-Board (1×6)\n→ Bottom Board'},
+  {id:'mpu',pos:[[ci('G'),ri(4)],[ci('G'),ri(5)],[ci('G'),ri(6)],[ci('G'),ri(7)],[ci('G'),ri(8)],[ci('G'),ri(9)],[ci('G'),ri(10)],[ci('G'),ri(11)]],
+   pins:['VCC','GND','SCL','SDA','XDA','XCL','AD0','INT'],color:'#cc4444',label:'MPU-6050 (1×8)'},
+  {id:'b1',pos:[[ci('B'),ri(6)],[ci('C'),ri(6)],[ci('D'),ri(6)]],pins:['VIN','GND','VOUT'],color:'#cc6622',label:'Boost #1'},
+  {id:'b2',pos:[[ci('B'),ri(12)],[ci('C'),ri(12)],[ci('D'),ri(12)]],pins:['VIN','GND','VOUT'],color:'#cc6622',label:'Boost #2'},
+  {id:'al',pos:Array.from({length:12},(_,i)=>[ci('M'),i+1]),
+   pins:['TXO','RXI','RST','GND','D2','D3','D4','D5','D6 ✗','D7 ✗','D8','D9'],color:'#4488cc',label:'Arduino L (Col M)'},
+  {id:'ar',pos:Array.from({length:12},(_,i)=>[ci('S'),i+1]),
+   pins:['RAW','GND','RST','VCC','A3','A2','A1','A0','D13','D12','D11','D10'],color:'#4488cc',label:'Arduino R (Col S)'},
+  {id:'top',pos:[[ci('N'),ri(14)],[ci('O'),ri(14)],[ci('P'),ri(14)],[ci('Q'),ri(14)]],
+   pins:['VCC_sns','ECHO','TRIG','GND'],color:'#66aa44',label:'Top Header (1×4)\nRow 14, N-Q'},
+];
+comps.forEach(comp=>{comp.pos.forEach((p,i)=>{
+  let x='';if(comp.pins[i].includes('✗'))x='\n⚠️ DEFECTIVE';
+  if(comp.wc)x+=`\nWire: ${comp.cn[i]}`;
+  si(p[0],p[1],`${comp.label}\nPin: ${comp.pins[i]}\nGrid: ${CL[p[0]]}${p[1]+1}${x}`);
+})});
+si(ci('A'),ri(8),'Battery GND (A8)\nScrew terminal');si(ci('A'),ri(9),'Battery + (A9)\nScrew terminal');
+si(ci('P'),ri(7),'Arduino A5/SCL pad (~P7)\n⚠ Interior pad on Arduino body\nSolder wire directly to pad');
+si(ci('P'),ri(8),'Arduino A4/SDA pad (~P8)\n⚠ Interior pad on Arduino body\nSolder wire directly to pad');
+
+// === WIRES ===
+const W={
+  motor:[
+    {from:[ci('H'),ri(3)],to:[ci('M'),ri(9)],wp:[[ci('H'),ri(9)]],color:'#33cc33',w:2.5,label:'AIN2(Grn): H3→H9→M9(D5)'},
+    {from:[ci('I'),ri(3)],to:[ci('M'),ri(8)],wp:[[ci('I'),ri(8)]],color:'#3388ff',w:2.5,label:'AIN1(Blu): I3→I8→M8(D4)'},
+    {from:[ci('J'),ri(3)],to:[ci('M'),ri(12)],wp:[[ci('J'),ri(12)]],color:'#dddddd',w:2.5,label:'BIN1(Wht): J3→J12→M12(D8)'},
+    {from:[ci('K'),ri(3)],to:[ci('M'),ri(13)],wp:[[ci('K'),ri(13)]],color:'#ffdd00',w:2.5,label:'BIN2(Yel): K3→K13→M13(D9)'},
+  ],
+  gnd:[
+    // L3(inter-board GND)→L4→L5(joins row 5 GND bus)
+    {from:[ci('L'),ri(3)],to:[ci('L'),ri(5)],wp:[[ci('L'),ri(4)]],
+     color:'#555',w:2.5,dash:[4,3],label:'GND: L3→L4→L5\n(inter-board GND → row 5 bus)'},
+    // L5→K5→J5→I5→H5→G5 (row 5 → MPU GND)
+    {from:[ci('L'),ri(5)],to:[ci('G'),ri(5)],wp:[[ci('K'),ri(5)],[ci('J'),ri(5)],[ci('I'),ri(5)],[ci('H'),ri(5)]],
+     color:'#555',w:2.5,dash:[4,3],label:'GND: L5→K5→...→H5→G5\n(row 5 → MPU GND)'},
+    // G5→F5→E5→E6→C6 (MPU GND → Boost#1 GND)
+    {from:[ci('G'),ri(5)],to:[ci('C'),ri(6)],wp:[[ci('F'),ri(5)],[ci('E'),ri(5)],[ci('E'),ri(6)]],
+     color:'#555',w:2.5,dash:[4,3],label:'GND: G5→F5→E5→E6→C6\n(MPU → Boost#1 GND)'},
+    // C6→C7→...→C12 (Boost#1 GND → Boost#2 GND)
+    {from:[ci('C'),ri(6)],to:[ci('C'),ri(12)],wp:[[ci('C'),ri(7)],[ci('C'),ri(8)],[ci('C'),ri(9)],[ci('C'),ri(10)],[ci('C'),ri(11)]],
+     color:'#555',w:2.5,dash:[4,3],label:'GND: C6→C7→...→C12\n(Boost#1 → Boost#2 GND)'},
+    // L5→M5 (row 5 → Arduino GND)
+    {from:[ci('L'),ri(5)],to:[ci('M'),ri(5)],wp:[],
+     color:'#555',w:2.5,dash:[4,3],label:'GND: L5→M5\n(row 5 → Arduino GND)'},
+    // M5→N5→O5→P5→Q5→Q8→Q11→Q14 (Arduino → Top header GND)
+    {from:[ci('M'),ri(5)],to:[ci('Q'),ri(14)],wp:[[ci('N'),ri(5)],[ci('O'),ri(5)],[ci('P'),ri(5)],[ci('Q'),ri(5)],[ci('Q'),ri(8)],[ci('Q'),ri(11)]],
+     color:'#555',w:2.5,dash:[4,3],label:'GND: M5→N5→O5→P5→Q5→...→Q14\n(Arduino → Top header GND)'},
+    // BAT GND: A8→B8→C8 (Battery GND → GND bus on col C)
+    {from:[ci('A'),ri(8)],to:[ci('C'),ri(8)],wp:[[ci('B'),ri(8)]],
+     color:'#555',w:2.5,dash:[4,3],label:'BAT GND: A8→B8→C8\n(Battery GND → GND bus)'},
+  ],
+  top:[
+    {from:[ci('S'),ri(12)],to:[ci('O'),ri(14)],wp:[[ci('R'),ri(12)],[ci('Q'),ri(12)],[ci('P'),ri(12)],[ci('O'),ri(12)],[ci('O'),ri(13)]],
+     color:'#66cccc',w:2.5,label:'D11(S12)→R12→...→O12→O14 (ECHO)'},
+    {from:[ci('S'),ri(13)],to:[ci('P'),ri(14)],wp:[[ci('R'),ri(13)],[ci('Q'),ri(13)],[ci('P'),ri(13)]],
+     color:'#cc66ff',w:2.5,label:'D10(S13)→R13→Q13→P13→P14 (TRIG)'},
+  ],
+  pvm:[
+    // BAT+: A9→B9 (Battery+ taps into col B VIN line)
+    {from:[ci('A'),ri(9)],to:[ci('B'),ri(9)],wp:[],
+     color:'#ff9900',w:2.5,dash:[6,3],label:'BAT+: A9→B9\n(Battery+ → VIN bus on col B)'},
+    // B12→B11→...→B7→B6 (straight col B)
+    {from:[ci('B'),ri(12)],to:[ci('B'),ri(6)],wp:[[ci('B'),ri(11)],[ci('B'),ri(10)],[ci('B'),ri(9)],[ci('B'),ri(8)],[ci('B'),ri(7)]],
+     color:'#ff9900',w:2.5,dash:[6,3],label:'BAT+: B12→B11→...→B6\n(Boost#2 VIN → Boost#1 VIN)'},
+  ],
+  p5v:[
+    // Boost#1 VOUT(D6) → inter-board VM(G3): D6→D5→D4→D3→E3→F3→G3
+    {from:[ci('D'),ri(6)],to:[ci('G'),ri(3)],wp:[[ci('D'),ri(5)],[ci('D'),ri(4)],[ci('D'),ri(3)],[ci('E'),ri(3)],[ci('F'),ri(3)]],
+     color:'#ff3333',w:2.5,label:'5V: D6→D5→D4→D3→E3→F3→G3\n(Boost#1 VOUT → inter-board VM\n→ bottom board DRV8833)'},
+
+    // Boost#2 VOUT(D12) → MPU VCC(G4): D12→E12→E11→...→E4→F4→G4
+    {from:[ci('D'),ri(12)],to:[ci('G'),ri(4)],
+     wp:[[ci('E'),ri(12)],[ci('E'),ri(11)],[ci('E'),ri(10)],[ci('E'),ri(9)],[ci('E'),ri(8)],[ci('E'),ri(7)],[ci('E'),ri(6)],[ci('E'),ri(5)],[ci('E'),ri(4)],[ci('F'),ri(4)]],
+     color:'#ff6600',w:2.5,label:'5V: D12→E12→E11→...→E4→F4→G4\n(Boost#2 VOUT → MPU VCC)'},
+
+    // MPU VCC(G4) → Arduino VCC(S5): G4→E4→E3→E2→E1→H1→L1→R1→R2→R3→R4→R5→S5
+    // Wait E4 already used above. Use different col:
+    // G4 already connects to row 4. Go up from F4(already a waypoint above):
+    // From the 5V rail at E col: E4→E3→E2→E1→row1→R1→R2→...→R5→S5
+    // E3 might overlap with Boost#1 route at D3→E3. They share E3 node which is fine electrically.
+    // But visually let's offset: use the node at E1 going right
+    {from:[ci('E'),ri(4)],to:[ci('S'),ri(5)],
+     wp:[[ci('E'),ri(3)],[ci('E'),ri(2)],[ci('E'),ri(1)],[ci('H'),ri(1)],[ci('L'),ri(1)],[ci('R'),ri(1)],[ci('R'),ri(2)],[ci('R'),ri(3)],[ci('R'),ri(4)],[ci('R'),ri(5)]],
+     color:'#ff6600',w:2,label:'5V: E4→E3→E2→E1→H1→L1→R1→R2→...→R5→S5\n(MPU VCC rail → Arduino VCC)'},
+
+    // Boost#2 VOUT(D12) → Top header VCC(N14): D12→D13→D14→G14→J14→L14→N14
+    {from:[ci('D'),ri(12)],to:[ci('N'),ri(14)],
+     wp:[[ci('D'),ri(13)],[ci('D'),ri(14)],[ci('G'),ri(14)],[ci('J'),ri(14)],[ci('L'),ri(14)]],
+     color:'#ff6600',w:2.5,label:'5V: D12→D13→D14→...→N14\n(Boost#2 VOUT → Top VCC)'},
+  ],
+  i2c:[
+    // A5/SCL: Arduino interior pad (~P7) → MPU SCL (G6)
+    // These are flying wires from Arduino body pads, not perfboard holes
+    // Route approximation: P7→O7→N7(empty)→...→H7(empty)→G7 NO G7 is SDA
+    // SCL = G6, SDA = G7. A5=SCL, A4=SDA.
+    // A5/SCL pad is near P7, route: P7→O7→N7→...→H7→H6→G6
+    {from:[ci('P'),ri(7)],to:[ci('G'),ri(6)],
+     wp:[[ci('O'),ri(7)],[ci('N'),ri(7)],[ci('L'),ri(7)],[ci('I'),ri(7)],[ci('H'),ri(7)],[ci('H'),ri(6)]],
+     color:'#33aaff',w:2.5,label:'I2C SCL: A5(~P7)→across row 7→H7→H6→G6\n(Arduino A5 → MPU SCL)\n⚠ A5 is interior pad on Arduino body'},
+    // A4/SDA: Arduino interior pad (~P8) → MPU SDA (G7)
+    // Route: P8→O8→N8(empty)→...→H8→H7→G7
+    {from:[ci('P'),ri(8)],to:[ci('G'),ri(7)],
+     wp:[[ci('O'),ri(8)],[ci('N'),ri(8)],[ci('L'),ri(8)],[ci('I'),ri(8)],[ci('H'),ri(8)],[ci('H'),ri(7)]],
+     color:'#33ff66',w:2.5,label:'I2C SDA: A4(~P8)→across row 8→H8→H7→G7\n(Arduino A4 → MPU SDA)\n⚠ A4 is interior pad on Arduino body'},
+    // INT: M6(D2) → G11(MPU INT)
+    // Route: M6→L6(empty)→L7(empty)→L8→...→L11(empty)→K11→J11→I11→H11→G11
+    {from:[ci('M'),ri(6)],to:[ci('G'),ri(11)],
+     wp:[[ci('L'),ri(6)],[ci('L'),ri(7)],[ci('L'),ri(8)],[ci('L'),ri(9)],[ci('L'),ri(10)],[ci('L'),ri(11)],[ci('K'),ri(11)],[ci('J'),ri(11)],[ci('I'),ri(11)],[ci('H'),ri(11)]],
+     color:'#ff66aa',w:2.5,label:'INT: M6(D2)→L6→L7→...→L11→K11→...→H11→G11\n(Arduino D2 → MPU INT)'},
+  ],
+};
+
+function dw(g,n){if(!sh[n])return;g.forEach(w=>{
+  cx.strokeStyle=w.color;cx.lineWidth=w.w||2;cx.globalAlpha=0.8;
+  cx.lineCap='round';cx.lineJoin='round';if(w.dash)cx.setLineDash(w.dash);
+  cx.beginPath();cx.moveTo(hx(w.from[0]),hy(w.from[1]));
+  (w.wp||[]).forEach(p=>cx.lineTo(hx(p[0]),hy(p[1])));
+  cx.lineTo(hx(w.to[0]),hy(w.to[1]));cx.stroke();cx.setLineDash([]);cx.globalAlpha=1;
+  [w.from,w.to].forEach(p=>{cx.beginPath();cx.arc(hx(p[0]),hy(p[1]),3.5,0,Math.PI*2);cx.fillStyle=w.color;cx.fill()});
+})}
+
+function draw(){
+  cx.clearRect(0,0,cv.width,cv.height);
+  cx.fillStyle='#2d8c4e';cx.beginPath();cx.roundRect(BX,BY,BW,BH,6);cx.fill();
+  cx.strokeStyle='#1a5c30';cx.lineWidth=2;cx.stroke();
+  cx.font='600 10px "JetBrains Mono"';cx.textAlign='center';cx.fillStyle='#aaddaa';
+  for(let c=0;c<NC;c++)cx.fillText(CL[c],hx(c),BY+13);
+  cx.textAlign='right';for(let r=0;r<NR;r++){cx.fillStyle='#aaddaa';cx.fillText(RL[r],BX+14,hy(r)+4)}
+  // Zones
+  cx.fillStyle='rgba(204,102,34,0.08)';cx.fillRect(hx(0)-10,hy(ri(4))-10,hx(4)-hx(0)+20,hy(ri(13))-hy(ri(4))+20);
+  cx.fillStyle='rgba(204,68,68,0.06)';cx.fillRect(hx(5)-8,hy(ri(3))-10,hx(11)-hx(5)+16,hy(ri(12))-hy(ri(3))+20);
+  cx.fillStyle='rgba(68,136,204,0.06)';cx.fillRect(hx(11)-4,hy(ri(2))-10,hx(19)-hx(11)+12,hy(ri(13))-hy(ri(2))+20);
+  // Wires (behind holes)
+  dw(W.pvm,'pvm');dw(W.p5v,'p5v');dw(W.gnd,'gnd');dw(W.motor,'motor');dw(W.top,'top');dw(W.i2c,'i2c');
+  // Holes
+  for(let c=0;c<NC;c++)for(let r=0;r<NR;r++){
+    cx.beginPath();cx.arc(hx(c),hy(r),HR,0,Math.PI*2);cx.fillStyle='#1a5c30';cx.fill();
+    cx.beginPath();cx.arc(hx(c),hy(r),HR-1.2,0,Math.PI*2);cx.fillStyle='#3da862';cx.fill();
+  }
+  // Sockets
+  comps.forEach(comp=>{
+    const xs=comp.pos.map(p=>hx(p[0])),ys=comp.pos.map(p=>hy(p[1]));
+    cx.strokeStyle=comp.color;cx.lineWidth=2;cx.beginPath();
+    cx.roundRect(Math.min(...xs)-9,Math.min(...ys)-9,Math.max(...xs)-Math.min(...xs)+18,Math.max(...ys)-Math.min(...ys)+18,3);
+    cx.stroke();cx.fillStyle=comp.color+'12';cx.fill();
+    comp.pos.forEach((p,i)=>{
+      const x=hx(p[0]),y=hy(p[1]);
+      cx.beginPath();cx.arc(x,y,HR+1,0,Math.PI*2);cx.fillStyle='#111';cx.fill();
+      if(comp.wc){cx.beginPath();cx.arc(x,y,HR-0.5,0,Math.PI*2);cx.fillStyle=comp.wc[i];cx.fill();
+        if(comp.wc[i]==='#ffffff'){cx.strokeStyle='#888';cx.lineWidth=0.8;cx.stroke()}}
+      else{cx.beginPath();cx.arc(x,y,HR-1,0,Math.PI*2);cx.fillStyle=comp.color+'44';cx.fill()}
+      if(comp.pins[i]&&comp.pins[i].includes('✗')){cx.strokeStyle='#ff3333';cx.lineWidth=2.5;cx.beginPath();
+        cx.moveTo(x-5,y-5);cx.lineTo(x+5,y+5);cx.moveTo(x+5,y-5);cx.lineTo(x-5,y+5);cx.stroke()}
+    });
+  });
+  // Battery marker at A8(GND), A9(BAT+)
+  const bf=hx(ci('A'));
+  cx.fillStyle='#ff990033';cx.fillRect(bf-10,hy(ri(8))-8,20,hy(ri(9))-hy(ri(8))+16);
+  cx.strokeStyle='#ff9900';cx.lineWidth=1.5;cx.strokeRect(bf-10,hy(ri(8))-8,20,hy(ri(9))-hy(ri(8))+16);
+  cx.font='bold 7px "JetBrains Mono"';cx.textAlign='center';cx.fillStyle='#ff9900';
+  cx.fillText('BAT−',bf-1,hy(ri(8))-12);cx.fillText('BAT+',bf-1,hy(ri(9))+15);
+  // A4/A5 interior pad markers
+  if(sh.i2c){
+    const ap=hx(ci('P'));
+    cx.fillStyle='#33aaff33';cx.fillRect(ap-10,hy(ri(7))-8,20,hy(ri(8))-hy(ri(7))+16);
+    cx.strokeStyle='#33aaff';cx.lineWidth=1.5;cx.strokeRect(ap-10,hy(ri(7))-8,20,hy(ri(8))-hy(ri(7))+16);
+    cx.font='bold 6px "JetBrains Mono"';cx.textAlign='center';
+    cx.fillStyle='#33aaff';cx.fillText('A5/SCL',ap,hy(ri(7))-11);
+    cx.fillStyle='#33ff66';cx.fillText('A4/SDA',ap,hy(ri(8))+14);
+    cx.fillStyle='#aaa';cx.font='5px "JetBrains Mono"';cx.fillText('(interior)',ap,hy(ri(8))+21);
+  }
+  // Labels
+  cx.textAlign='center';cx.font='600 9px "JetBrains Mono"';cx.fillStyle='#ffaa00';
+  cx.fillText('↑ BOTTOM BOARD',hx(ci('I')+0.5),hy(ri(3))-16);
+  cx.font='bold 7px "JetBrains Mono"';
+  [{l:'VM',c:'#ff3333'},{l:'AIN2',c:'#33cc33'},{l:'AIN1',c:'#3388ff'},{l:'BIN1',c:'#ddd'},{l:'BIN2',c:'#ffdd00'},{l:'GND',c:'#666'}].forEach((d,i)=>{
+    cx.fillStyle=d.c;cx.fillText(d.l,hx(ci('G')+i),hy(ri(3))+16);
+  });
+  cx.font='6px "JetBrains Mono"';cx.fillStyle='#777';
+  ['RED','GRN','BLU','WHT','YEL','BLK'].forEach((c,i)=>cx.fillText(c,hx(ci('G')+i),hy(ri(3))+23));
+  // MPU
+  cx.font='600 9px "JetBrains Mono"';cx.fillStyle='#cc4444';cx.fillText('MPU-6050',hx(ci('I')),hy(ri(7.5)));
+  cx.font='7px "JetBrains Mono"';cx.fillStyle='#ee7777';cx.textAlign='right';
+  ['VCC','GND','SCL','SDA','XDA','XCL','AD0','INT'].forEach((l,i)=>cx.fillText(l,hx(ci('G'))-11,hy(ri(4)+i)+3));
+  // Boosts
+  cx.textAlign='center';cx.font='600 8px "JetBrains Mono"';cx.fillStyle='#cc6622';
+  cx.fillText('B#1',hx(ci('C')),hy(ri(5)));cx.fillText('B#2',hx(ci('C')),hy(ri(11)));
+  cx.font='6px "JetBrains Mono"';cx.fillStyle='#ee9955';
+  ['Vin','Gnd','Vo'].forEach((l,i)=>{cx.fillText(l,hx(ci('B')+i),hy(ri(6))+13);cx.fillText(l,hx(ci('B')+i),hy(ri(12))+13)});
+  // Arduino
+  cx.font='600 9px "JetBrains Mono"';cx.fillStyle='#4488cc';cx.fillText('ARDUINO',hx(ci('P')),hy(ri(7)));
+  cx.font='7px "JetBrains Mono"';cx.textAlign='right';
+  ['TXO','RXI','RST','GND','D2','D3','D4','D5','D6✗','D7✗','D8','D9'].forEach((l,i)=>{
+    cx.fillStyle=l.includes('✗')?'#ff4444':'#6699cc';cx.fillText(l,hx(ci('M'))-10,hy(i+1)+3);
+  });
+  cx.textAlign='left';
+  ['RAW','GND','RST','VCC','A3','A2','A1','A0','D13','D12','D11','D10'].forEach((l,i)=>{
+    cx.fillStyle='#6699cc';cx.fillText(l,hx(ci('S'))+10,hy(i+1)+3);
+  });
+  cx.font='bold 6px "JetBrains Mono"';cx.textAlign='left';
+  [{r:8,l:'←AIN1',c:'#3388ff'},{r:9,l:'←AIN2',c:'#33cc33'},{r:12,l:'←BIN1',c:'#ddd'},{r:13,l:'←BIN2',c:'#ffdd00'}].forEach(d=>{
+    cx.fillStyle=d.c;cx.fillText(d.l,hx(ci('M'))+9,hy(ri(d.r))+3);
+  });
+  // Top header
+  cx.textAlign='center';cx.font='600 8px "JetBrains Mono"';cx.fillStyle='#66aa44';
+  cx.fillText('↓ TOP BOARD',hx(ci('O')+0.5),hy(ri(14))+20);
+  cx.fillStyle='#88cc88';cx.font='7px "JetBrains Mono"';
+  ['VCC','ECHO','TRIG','GND'].forEach((l,i)=>cx.fillText(l,hx(ci('N')+i),hy(ri(14))-11));
+}
+
+cv.addEventListener('mousemove',e=>{
+  const rect=cv.getBoundingClientRect(),mx=(e.clientX-rect.left)*(cv.width/rect.width),my=(e.clientY-rect.top)*(cv.height/rect.height);
+  let f=0;for(let c=0;c<NC&&!f;c++)for(let r=0;r<NR&&!f;r++){
+    if(Math.hypot(mx-hx(c),my-hy(r))<HR+5){const i=nfo[`${c},${r}`]||`Empty: ${CL[c]}${r+1}`;
+      tt.style.display='block';tt.style.left=(e.clientX-rect.left+14)+'px';tt.style.top=(e.clientY-rect.top-10)+'px';
+      tt.innerHTML=i.replace(/\n/g,'<br>');f=1}}
+  if(!f)tt.style.display='none';
+});
+cv.addEventListener('mouseleave',()=>tt.style.display='none');
+draw();
+</script>
+</body>
+</html>

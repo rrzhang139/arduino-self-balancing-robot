@@ -1,0 +1,269 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Top Layer — Wiring Layout</title>
+<!--
+=== REPRODUCTION NOTES ===
+BOARD: 20 cols (A-T) × 14 rows (1-14). Perfboard 4cm×6cm.
+
+INTER-BOARD (Row 14, N-Q): receives from middle board top header
+  N14=VCC (from Boost#2 5V rail)
+  O14=ECHO (from Arduino D11)
+  P14=TRIG (from Arduino D10)
+  Q14=GND
+
+US-020 SONAR (FUTURE): Row 1, N-Q area
+  Typical US-020 pinout: VCC, TRIG, ECHO, GND (check your module)
+
+BATTERY: 18650 sits physically on this board (left/center area)
+  Battery wires run DOWN separately to middle board A8(GND), A9(BAT+)
+  On/off switch is inline with BAT+ wire
+
+WIRING (all FUTURE — sonar not installed yet):
+  N14 (VCC) → N1 (sonar VCC) — straight up col N
+  O14 (ECHO) → O1 (sonar ECHO) — straight up col O
+  P14 (TRIG) → P1 (sonar TRIG) — straight up col P
+  Q14 (GND) → Q1 (sonar GND) — straight up col Q
+
+FOR NOW (no sonar): This board is just a physical platform for the
+battery + switch. The inter-board header is soldered but the sonar
+wiring is deferred.
+-->
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600;700&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap');
+  *{margin:0;padding:0;box-sizing:border-box}
+  body{background:#1a1a2e;color:#e0e0e0;font-family:'IBM Plex Sans',sans-serif;min-height:100vh;padding:20px}
+  h1{font-family:'JetBrains Mono',monospace;font-size:1.3rem;color:#00ff88;text-align:center;margin-bottom:4px}
+  .sub{text-align:center;color:#888;font-size:0.78rem;margin-bottom:14px}
+  .ctr{display:flex;flex-direction:column;align-items:center;gap:14px}
+  .tgl{display:flex;gap:5px;flex-wrap:wrap;justify-content:center}
+  .tgl button{background:#2a2a4a;color:#ccc;border:1px solid #444;padding:4px 9px;border-radius:4px;cursor:pointer;font-family:'JetBrains Mono',monospace;font-size:0.65rem;transition:all 0.2s}
+  .tgl button:hover{background:#3a3a5a}
+  .tgl button.on{background:#00ff88;color:#1a1a2e;border-color:#00ff88}
+  .tgl button.future{background:#ff990044;color:#ff9900;border-color:#ff9900}
+  .tgl button.future.on{background:#ff9900;color:#1a1a2e;border-color:#ff9900}
+  canvas{border-radius:6px;box-shadow:0 4px 24px rgba(0,0,0,0.5)}
+  .tt{position:absolute;background:#111;color:#fff;padding:6px 10px;border-radius:4px;font-size:0.7rem;font-family:'JetBrains Mono',monospace;pointer-events:none;display:none;z-index:100;border:1px solid #00ff88;max-width:320px;line-height:1.4}
+  .legend{display:flex;flex-wrap:wrap;gap:12px;justify-content:center;margin-top:8px;font-family:'JetBrains Mono',monospace;font-size:0.65rem}
+  .legend span{display:flex;align-items:center;gap:4px}
+  .legend .dot{width:10px;height:10px;border-radius:50%;display:inline-block}
+</style>
+</head>
+<body>
+<h1>TOP LAYER — Wiring Layout</h1>
+<p class="sub">Toggle groups • Sonar wiring is FUTURE (deferred) • Hover for info</p>
+<div class="ctr">
+  <div class="tgl">
+    <button class="on" data-g="interboard">Inter-Board Header</button>
+    <button class="future on" data-g="sonar">Sonar Wires (FUTURE)</button>
+    <button class="on" data-g="battery">Battery Zone</button>
+  </div>
+  <div style="position:relative;display:inline-block">
+    <canvas id="cv" width="740" height="560"></canvas>
+    <div class="tt" id="tt"></div>
+  </div>
+  <div class="legend">
+    <span><span class="dot" style="background:#66aa44"></span> Inter-board header (from middle board)</span>
+    <span><span class="dot" style="background:#ff6600"></span> US-020 Sonar (FUTURE)</span>
+    <span><span class="dot" style="background:#ff9900;opacity:0.5"></span> Battery zone (physical)</span>
+  </div>
+</div>
+<script>
+const cv=document.getElementById('cv'),cx=cv.getContext('2d'),tt=document.getElementById('tt');
+const NC=20,NR=14,PX=50,PY=45,HS=32,HR=5;
+const CL='ABCDEFGHIJKLMNOPQRST'.split(''),RL=Array.from({length:14},(_,i)=>String(i+1));
+function ci(l){return CL.indexOf(l)}function ri(n){return n-1}
+function hx(c){return PX+c*HS}function hy(r){return PY+r*HS}
+const BX=PX-20,BY=PY-20,BW=(NC-1)*HS+40,BH=(NR-1)*HS+40;
+const nfo={};function si(c,r,t){nfo[`${c},${r}`]=t}
+const sh={interboard:1,sonar:1,battery:1};
+document.querySelectorAll('.tgl button').forEach(b=>{b.addEventListener('click',()=>{const g=b.dataset.g;sh[g]=!sh[g];b.classList.toggle('on');draw()})});
+
+// === COMPONENTS ===
+const comps=[
+  // Inter-board female header at Row 14, N-Q (receives middle board top pins)
+  {id:'ib',pos:[[ci('N'),ri(14)],[ci('O'),ri(14)],[ci('P'),ri(14)],[ci('Q'),ri(14)]],
+   pins:['VCC','ECHO','TRIG','GND'],
+   color:'#66aa44',label:'Inter-Board (1×4)\n← From Middle Board'},
+  // US-020 Sonar sensor socket at Row 1, N-Q (FUTURE)
+  {id:'sonar',pos:[[ci('N'),ri(1)],[ci('O'),ri(1)],[ci('P'),ri(1)],[ci('Q'),ri(1)]],
+   pins:['VCC','ECHO','TRIG','GND'],
+   color:'#ff6600',label:'US-020 Sonar (FUTURE)\nRow 1, N-Q',future:true},
+];
+comps.forEach(comp=>{comp.pos.forEach((p,i)=>{
+  let x='';if(comp.future)x+='\n⏳ NOT INSTALLED YET';
+  si(p[0],p[1],`${comp.label}\nPin: ${comp.pins[i]}\nGrid: ${CL[p[0]]}${p[1]+1}${x}`);
+})});
+
+// Battery zone info
+for(let c=ci('B');c<=ci('J');c++){
+  for(let r=ri(4);r<=ri(11);r++){
+    const existing=nfo[`${c},${r}`];
+    if(!existing) si(c,r,`Battery Zone (physical)\n18650 holder sits here\nNo electrical connection on perfboard\nGrid: ${CL[c]}${r+1}`);
+  }
+}
+// Switch area
+si(ci('B'),ri(3),'Switch Zone\nOn/Off switch\nInline with BAT+ wire');
+si(ci('C'),ri(3),'Switch Zone\nOn/Off switch\nInline with BAT+ wire');
+si(ci('D'),ri(3),'Switch Zone\nOn/Off switch\nInline with BAT+ wire');
+
+// Battery wire exit points
+si(ci('A'),ri(7),'Battery wire exit\nBAT− (Black) runs DOWN\nto middle board A8');
+si(ci('A'),ri(8),'Battery wire exit\nBAT+ (Red, via switch) runs DOWN\nto middle board A9');
+
+// === WIRES (all FUTURE — sonar not installed) ===
+const W={
+  sonar:[
+    // VCC: N14 → N1
+    {from:[ci('N'),ri(14)],to:[ci('N'),ri(1)],
+     wp:[[ci('N'),ri(10)],[ci('N'),ri(7)],[ci('N'),ri(4)]],
+     color:'#ff3333',w:2,dash:[6,4],label:'FUTURE: VCC N14→N1\n(Inter-board VCC → Sonar VCC)'},
+    // ECHO: O14 → O1
+    {from:[ci('O'),ri(14)],to:[ci('O'),ri(1)],
+     wp:[[ci('O'),ri(10)],[ci('O'),ri(7)],[ci('O'),ri(4)]],
+     color:'#66cccc',w:2,dash:[6,4],label:'FUTURE: ECHO O14→O1\n(Inter-board ECHO → Sonar ECHO)'},
+    // TRIG: P14 → P1
+    {from:[ci('P'),ri(14)],to:[ci('P'),ri(1)],
+     wp:[[ci('P'),ri(10)],[ci('P'),ri(7)],[ci('P'),ri(4)]],
+     color:'#cc66ff',w:2,dash:[6,4],label:'FUTURE: TRIG P14→P1\n(Inter-board TRIG → Sonar TRIG)'},
+    // GND: Q14 → Q1
+    {from:[ci('Q'),ri(14)],to:[ci('Q'),ri(1)],
+     wp:[[ci('Q'),ri(10)],[ci('Q'),ri(7)],[ci('Q'),ri(4)]],
+     color:'#555',w:2,dash:[6,4],label:'FUTURE: GND Q14→Q1\n(Inter-board GND → Sonar GND)'},
+  ],
+};
+
+function dw(g,n){if(!sh[n])return;g.forEach(w=>{
+  cx.strokeStyle=w.color;cx.lineWidth=w.w||2;cx.globalAlpha=0.5;
+  cx.lineCap='round';cx.lineJoin='round';if(w.dash)cx.setLineDash(w.dash);
+  cx.beginPath();cx.moveTo(hx(w.from[0]),hy(w.from[1]));
+  (w.wp||[]).forEach(p=>cx.lineTo(hx(p[0]),hy(p[1])));
+  cx.lineTo(hx(w.to[0]),hy(w.to[1]));cx.stroke();cx.setLineDash([]);cx.globalAlpha=1;
+  [w.from,w.to].forEach(p=>{cx.beginPath();cx.arc(hx(p[0]),hy(p[1]),3,0,Math.PI*2);cx.fillStyle=w.color;cx.globalAlpha=0.6;cx.fill();cx.globalAlpha=1});
+})}
+
+function draw(){
+  cx.clearRect(0,0,cv.width,cv.height);
+  // Board background
+  cx.fillStyle='#2d8c4e';cx.beginPath();cx.roundRect(BX,BY,BW,BH,6);cx.fill();
+  cx.strokeStyle='#1a5c30';cx.lineWidth=2;cx.stroke();
+  // Column/row labels
+  cx.font='600 10px "JetBrains Mono"';cx.textAlign='center';cx.fillStyle='#aaddaa';
+  for(let c=0;c<NC;c++)cx.fillText(CL[c],hx(c),BY+13);
+  cx.textAlign='right';for(let r=0;r<NR;r++){cx.fillStyle='#aaddaa';cx.fillText(RL[r],BX+14,hy(r)+4)}
+
+  // Battery zone (physical area)
+  if(sh.battery){
+    const bx1=hx(ci('B'))-12,by1=hy(ri(4))-12;
+    const bx2=hx(ci('J'))+12,by2=hy(ri(11))+12;
+    cx.fillStyle='rgba(255,153,0,0.06)';
+    cx.beginPath();cx.roundRect(bx1,by1,bx2-bx1,by2-by1,4);cx.fill();
+    cx.strokeStyle='#ff990044';cx.lineWidth=1.5;cx.setLineDash([4,3]);cx.stroke();cx.setLineDash([]);
+    // Battery icon in center
+    cx.font='600 11px "JetBrains Mono"';cx.textAlign='center';cx.fillStyle='#ff990088';
+    cx.fillText('🔋 18650 BATTERY',hx(ci('F')),hy(ri(7)));
+    cx.font='8px "JetBrains Mono"';cx.fillStyle='#ff990066';
+    cx.fillText('(physical — holder sits here)',hx(ci('F')),hy(ri(7))+14);
+    cx.fillText('No perfboard connections needed',hx(ci('F')),hy(ri(7))+26);
+
+    // Switch area
+    const sx1=hx(ci('B'))-10,sy1=hy(ri(3))-10;
+    const sx2=hx(ci('D'))+10,sy2=hy(ri(3))+10;
+    cx.fillStyle='rgba(255,200,0,0.08)';cx.fillRect(sx1,sy1,sx2-sx1,sy2-sy1);
+    cx.strokeStyle='#ffcc0066';cx.lineWidth=1;cx.strokeRect(sx1,sy1,sx2-sx1,sy2-sy1);
+    cx.font='bold 7px "JetBrains Mono"';cx.fillStyle='#ffcc00';cx.textAlign='center';
+    cx.fillText('SWITCH',hx(ci('C')),hy(ri(3))-14);
+    cx.font='6px "JetBrains Mono"';cx.fillStyle='#ffcc0088';
+    cx.fillText('ON/OFF',hx(ci('C')),hy(ri(3))+16);
+
+    // Battery wire exit arrows
+    const ax=hx(ci('A'));
+    cx.fillStyle='#ff990033';cx.fillRect(ax-10,hy(ri(7))-8,20,hy(ri(8))-hy(ri(7))+16);
+    cx.strokeStyle='#ff9900';cx.lineWidth=1.5;cx.strokeRect(ax-10,hy(ri(7))-8,20,hy(ri(8))-hy(ri(7))+16);
+    cx.font='bold 6px "JetBrains Mono"';cx.textAlign='center';cx.fillStyle='#333';
+    cx.fillText('BAT−',ax,hy(ri(7))+2);cx.fillStyle='#ff3333';
+    cx.fillText('BAT+',ax,hy(ri(8))+2);
+    cx.font='5px "JetBrains Mono"';cx.fillStyle='#ff9900';
+    cx.fillText('↓ to mid',ax,hy(ri(8))+16);
+    cx.fillText('A8,A9',ax,hy(ri(8))+23);
+  }
+
+  // Sonar zone highlight
+  if(sh.sonar){
+    cx.fillStyle='rgba(255,102,0,0.05)';
+    cx.fillRect(hx(ci('M'))-8,hy(ri(1))-14,hx(ci('R'))-hx(ci('M'))+16,28);
+  }
+
+  // Wires (behind holes)
+  dw(W.sonar,'sonar');
+
+  // Holes
+  for(let c=0;c<NC;c++)for(let r=0;r<NR;r++){
+    cx.beginPath();cx.arc(hx(c),hy(r),HR,0,Math.PI*2);cx.fillStyle='#1a5c30';cx.fill();
+    cx.beginPath();cx.arc(hx(c),hy(r),HR-1.2,0,Math.PI*2);cx.fillStyle='#3da862';cx.fill();
+  }
+
+  // Component sockets
+  comps.forEach(comp=>{
+    const xs=comp.pos.map(p=>hx(p[0])),ys=comp.pos.map(p=>hy(p[1]));
+    const alpha=comp.future?0.5:1;
+    cx.globalAlpha=alpha;
+    cx.strokeStyle=comp.color;cx.lineWidth=2;cx.beginPath();
+    if(comp.future)cx.setLineDash([4,3]);
+    cx.roundRect(Math.min(...xs)-9,Math.min(...ys)-9,Math.max(...xs)-Math.min(...xs)+18,Math.max(...ys)-Math.min(...ys)+18,3);
+    cx.stroke();cx.fillStyle=comp.color+'12';cx.fill();
+    cx.setLineDash([]);
+    comp.pos.forEach((p,i)=>{
+      const x=hx(p[0]),y=hy(p[1]);
+      cx.beginPath();cx.arc(x,y,HR+1,0,Math.PI*2);cx.fillStyle='#111';cx.fill();
+      cx.beginPath();cx.arc(x,y,HR-1,0,Math.PI*2);cx.fillStyle=comp.color+'44';cx.fill();
+    });
+    cx.globalAlpha=1;
+  });
+
+  // Labels
+  // Inter-board header labels
+  if(sh.interboard){
+    cx.textAlign='center';cx.font='600 9px "JetBrains Mono"';cx.fillStyle='#66aa44';
+    cx.fillText('↑ MIDDLE BOARD',hx(ci('O')+0.5),hy(ri(14))+20);
+    cx.font='7px "JetBrains Mono"';cx.fillStyle='#88cc88';
+    ['VCC','ECHO','TRIG','GND'].forEach((l,i)=>cx.fillText(l,hx(ci('N')+i),hy(ri(14))-11));
+    cx.font='5px "JetBrains Mono"';cx.fillStyle='#66aa4488';
+    ['N14','O14','P14','Q14'].forEach((l,i)=>cx.fillText(l,hx(ci('N')+i),hy(ri(14))+14));
+  }
+
+  // Sonar labels
+  if(sh.sonar){
+    cx.globalAlpha=0.6;
+    cx.textAlign='center';cx.font='600 9px "JetBrains Mono"';cx.fillStyle='#ff6600';
+    cx.fillText('US-020 SONAR (FUTURE)',hx(ci('O')+0.5),hy(ri(1))-16);
+    cx.font='7px "JetBrains Mono"';cx.fillStyle='#ff8844';
+    ['VCC','ECHO','TRIG','GND'].forEach((l,i)=>cx.fillText(l,hx(ci('N')+i),hy(ri(1))+14));
+    cx.font='5px "JetBrains Mono"';cx.fillStyle='#ff660066';
+    cx.fillText('⏳ Install after balancing works',hx(ci('O')+0.5),hy(ri(1))+24);
+    cx.globalAlpha=1;
+  }
+
+  // Title area - what this board is for RIGHT NOW
+  cx.font='600 8px "JetBrains Mono"';cx.textAlign='center';cx.fillStyle='#00ff8866';
+  cx.fillText('RIGHT NOW: Just a battery platform',hx(ci('J')),hy(ri(13)));
+  cx.font='7px "JetBrains Mono"';cx.fillStyle='#00ff8844';
+  cx.fillText('Solder inter-board header • Mount battery • Add switch',hx(ci('J')),hy(ri(13))+12);
+}
+
+// Tooltip
+cv.addEventListener('mousemove',e=>{
+  const rect=cv.getBoundingClientRect(),mx=(e.clientX-rect.left)*(cv.width/rect.width),my=(e.clientY-rect.top)*(cv.height/rect.height);
+  let f=0;for(let c=0;c<NC&&!f;c++)for(let r=0;r<NR&&!f;r++){
+    if(Math.hypot(mx-hx(c),my-hy(r))<HR+5){const i=nfo[`${c},${r}`]||`Empty: ${CL[c]}${r+1}`;
+      tt.style.display='block';tt.style.left=(e.clientX-rect.left+14)+'px';tt.style.top=(e.clientY-rect.top-10)+'px';
+      tt.innerHTML=i.replace(/\n/g,'<br>');f=1}}
+  if(!f)tt.style.display='none';
+});
+cv.addEventListener('mouseleave',()=>tt.style.display='none');
+draw();
+</script>
+</body>
+</html>
