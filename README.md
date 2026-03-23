@@ -1,6 +1,8 @@
 # Arduino Self-Balancing Robot
 
-A comprehensive guide to building a small self-balancing robot based on the [Instructables tutorial](https://www.instructables.com/Arduino-Self-Balancing-Robot-1/).
+![Self-Balancing Robot](gallery/final.gif)
+
+A two-wheeled self-balancing robot built from scratch with Arduino Pro Mini, MPU6050 IMU, and PID control. Based on the [Instructables tutorial](https://www.instructables.com/Arduino-Self-Balancing-Robot-1/).
 
 ## Project Overview
 
